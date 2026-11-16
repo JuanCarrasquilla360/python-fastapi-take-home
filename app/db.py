@@ -15,9 +15,11 @@ def create_pool() -> Pool:
     pool: Pool = ConnectionPool(
         settings.database_url,
         connection_class=Connection[DictRow],
-        kwargs={"row_factory": dict_row},
-        min_size=1,
-        max_size=10,
+        # The API only reads: autocommit avoids a BEGIN/COMMIT round trip per request.
+        kwargs={"row_factory": dict_row, "autocommit": True},
+        min_size=settings.db_pool_min_size,
+        max_size=settings.db_pool_max_size,
+        timeout=settings.db_pool_timeout,
         open=False,
     )
     pool.open(wait=True)

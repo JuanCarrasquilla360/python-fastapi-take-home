@@ -2,11 +2,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 from psycopg import Connection
 from psycopg.rows import DictRow
+from psycopg_pool import PoolTimeout
 from pydantic import BaseModel
 
+from app import participants
 from app.db import create_pool, get_conn
 
 
@@ -17,7 +20,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pool.close()
 
 
-app = FastAPI(title="Coffee Health API", lifespan=lifespan)
+app = FastAPI(
+    title="Coffee Health API",
+    description="Filter and summarize the cleaned coffee & health dataset.",
+    lifespan=lifespan,
+)
+app.include_router(participants.router)
+
+
+@app.exception_handler(PoolTimeout)
+def pool_exhausted(request: Request, exc: PoolTimeout) -> JSONResponse:
+    """All DB connections busy for longer than the pool timeout: shed load with a 503."""
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "database busy, retry later"},
+        headers={"Retry-After": "1"},
+    )
+
 
 Conn = Annotated[Connection[DictRow], Depends(get_conn)]
 
@@ -27,22 +46,7 @@ class Health(BaseModel):
     database: str
 
 
-class Note(BaseModel):
-    id: int
-    title: str
-
-
 @app.get("/health")
 def health(conn: Conn) -> Health:
     conn.execute("select 1")
     return Health(status="ok", database="ok")
-
-
-@app.get("/notes")
-def list_notes(conn: Conn) -> list[Note]:
-    """Example endpoint backed by the sample `notes` table. Keep, replace or remove it."""
-    rows = conn.execute("select id, title from notes order by id").fetchall()
-    return [Note.model_validate(row) for row in rows]
-
-
-# TODO (Part 2): add the endpoint(s) that serve the coffee health records.
